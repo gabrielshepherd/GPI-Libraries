@@ -232,7 +232,6 @@ class ExternalNode(gpi.NodeAPI):
         g_buffer = np.zeros([dim_g[0]+4, dim_g[1]+4, 4], dtype=np.float64)               
         new_dim = list(np.shape(g_buffer))
         green_dim = new_dim
-        print(new_dim)
         for x in range(new_dim[0]):
             for y in range(new_dim[1]):
                 if x > 1 and y > 1 and x < (new_dim[0]-2) and y < (new_dim[1]-2):
@@ -368,10 +367,6 @@ class ExternalNode(gpi.NodeAPI):
         if line:
           i0, j0 = line[0]
           i1, j1 = line[1]
-          print("i0 is: " + str((i0)))
-          print("i1 is: " + str((i1)))
-          print("j0 is: " + str((j0)))
-          print("j1 is: " + str((j1)))
           # slicer and volumetric mode
           if ((j0 > (green_dim[0]-1)) and (j1 > (green_dim[0]-1))) \
             and ((i0 < (green_dim[1]-1)) and (i1 < (green_dim[1]-1))):
@@ -379,15 +374,17 @@ class ExternalNode(gpi.NodeAPI):
           else:
             if ((j0 > (green_dim[0]-1)) or (j1 > (green_dim[0]-1))) \
               and ((i0 < (green_dim[1]-1)) or (i1 < (green_dim[1]-1))): # slicer mode
-              print("Slicer mode!")
               if (j0 > (green_dim[0]-1)) and (i0 < (green_dim[1]-1)):    # first point is in control box
                 ii = i1
                 jj = j1
-              else:
+              else:                                                     # second point is in control box
                 ii = i0
                 jj = j0
-            else:                                                                   # volume mode
-              pass
+            else:                                                                     # volume mode
+              ii = (i0 + i1)//2
+              jj = (j0 + j1)//2
+              i_width = abs(i0 - i1) + 1
+              j_width = abs(j0 - j1) + 1
             # determine which box we are playing in
             if (ii > (green_dim[1]-1)) and  (jj > (green_dim[0]-1)):                # blue region
               # adjust coordinates to match blue region only (top corner is (0,0))

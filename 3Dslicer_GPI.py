@@ -184,7 +184,7 @@ class ExternalNode(gpi.NodeAPI):
         return 0
 
     def compute(self):
-        data3d = self.getData('in').astype(np.float64)                  # 80x150x100
+        data3d = self.getData('in').astype(np.float64)
         dim = list(np.shape(data3d))
         # reset default values with the values from the dimensions of the input data
         self.setAttr('Axial Slice (Blue)', max=dim[0])
@@ -193,9 +193,9 @@ class ExternalNode(gpi.NodeAPI):
         xslice = self.getVal('Axial Slice (Blue)')
         yslice = self.getVal('Coronal Slice (Green)')
         zslice = self.getVal('Sagittal Slice (Red)')
-        sagittalSlice = data3d[xslice, :, :]          # 150x100
-        coronalSlice = data3d[:, yslice, :]           # 80x100
-        transverseSlice = data3d[:, :, zslice]        # 80x150
+        sagittalSlice = data3d[xslice, :, :] 
+        coronalSlice = data3d[:, yslice, :]      
+        transverseSlice = data3d[:, :, zslice]     
 
         # find and define max value for the visible data
         maximum = np.max([np.max(sagittalSlice), np.max(coronalSlice), np.max(transverseSlice)])
@@ -208,14 +208,15 @@ class ExternalNode(gpi.NodeAPI):
 
         # add borders and crosshairs
         # make rgb data
-        sagittalSlice = np.dstack([sagittalSlice, sagittalSlice, sagittalSlice, sagittalSlice])            # 150x100x4
-        coronalSlice = np.dstack([coronalSlice, coronalSlice, coronalSlice, coronalSlice])                # 80x100x4
-        transverseSlice = np.dstack([transverseSlice, transverseSlice, transverseSlice, transverseSlice])    # 80x150x4
+        sagittalSlice = np.dstack([sagittalSlice, sagittalSlice, sagittalSlice, sagittalSlice])         
+        coronalSlice = np.dstack([coronalSlice, coronalSlice, coronalSlice, coronalSlice])              
+        transverseSlice = np.dstack([transverseSlice, transverseSlice, transverseSlice, transverseSlice])   
 
         # create R border for sagittal data
         dim_r = list(np.shape(sagittalSlice))
-        r_buffer = np.zeros([dim_r[0]+4, dim_r[1]+4, 4], dtype=np.float64)                  # 154x104x4
+        r_buffer = np.zeros([dim_r[0]+4, dim_r[1]+4, 4], dtype=np.float64)           
         new_dim = list(np.shape(r_buffer))
+        red_dim = new_dim
         for x in range(new_dim[0]):
             for y in range(new_dim[1]):
                 if x > 1 and y > 1 and x < (new_dim[0]-2) and y < (new_dim[1]-2):
@@ -228,8 +229,10 @@ class ExternalNode(gpi.NodeAPI):
         
         # create G border for coronal data
         dim_g = list(np.shape(coronalSlice))
-        g_buffer = np.zeros([dim_g[0]+4, dim_g[1]+4, 4], dtype=np.float64)                  # 84x104x4
+        g_buffer = np.zeros([dim_g[0]+4, dim_g[1]+4, 4], dtype=np.float64)               
         new_dim = list(np.shape(g_buffer))
+        green_dim = new_dim
+        print(new_dim)
         for x in range(new_dim[0]):
             for y in range(new_dim[1]):
                 if x > 1 and y > 1 and x < (new_dim[0]-2) and y < (new_dim[1]-2):
@@ -240,10 +243,11 @@ class ExternalNode(gpi.NodeAPI):
                 if y == zslice and ((x > 1 and x < (xslice-5)) or (x > (xslice+5) and x < (new_dim[0]-2))):
                     g_buffer[x][y][2] = 255
         
-        # create B border for transverse data
+        # create B border for axial data
         dim_b = list(np.shape(transverseSlice))
-        b_buffer = np.zeros([dim_b[0]+4, dim_b[1]+4, 4], dtype=np.float64)                  # 84x154x4
+        b_buffer = np.zeros([dim_b[0]+4, dim_b[1]+4, 4], dtype=np.float64)             
         new_dim = list(np.shape(b_buffer))
+        blue_dim = new_dim
         for x in range(new_dim[0]):
             for y in range(new_dim[1]):
                 if x > 1 and y > 1 and x < (new_dim[0]-2) and y < (new_dim[1]-2):
@@ -362,12 +366,43 @@ class ExternalNode(gpi.NodeAPI):
         # attempt to get line end coordinates
         line = self.getAttr('Viewport:', 'line')
         if line:
-          x0, y0 = line[0]
-          x1, y1 = line[1]
-          print("x0 is: " + str((x0)))
-          print("x1 is: " + str((x1)))
-          print("y0 is: " + str((y0)))
-          print("y1 is: " + str((y1)))
+          i0, j0 = line[0]
+          i1, j1 = line[1]
+          print("i0 is: " + str((i0)))
+          print("i1 is: " + str((i1)))
+          print("j0 is: " + str((j0)))
+          print("j1 is: " + str((j1)))
+          # slicer and volumetric mode
+          if ((j0 > (green_dim[0]-1)) and (j1 > (green_dim[0]-1))) \
+            and ((i0 < (green_dim[1]-1)) and (i1 < (green_dim[1]-1))):
+            print("ERROR: both endpoints cannot be in the control box")
+          else:
+            if ((j0 > (green_dim[0]-1)) or (j1 > (green_dim[0]-1))) \
+              and ((i0 < (green_dim[1]-1)) or (i1 < (green_dim[1]-1))): # slicer mode
+              print("Slicer mode!")
+              if (j0 > (green_dim[0]-1)) and (i0 < (green_dim[1]-1)):    # first point is in control box
+                ii = i1
+                jj = j1
+              else:
+                ii = i0
+                jj = j0
+            else:                                                                   # volume mode
+              pass
+            # determine which box we are playing in
+            if (ii > (green_dim[1]-1)) and  (jj > (green_dim[0]-1)):                # blue region
+              # adjust coordinates to match blue region only (top corner is (0,0))
+              ii -= (green_dim[1]-1)
+              jj -= (green_dim[0]-1)
+              self.setAttr('Coronal Slice (Green)', val=jj)
+              self.setAttr('Sagittal Slice (Red)', val=ii)
+            elif ii > (green_dim[1]-1):                                             # red region
+              # adjust coordinates to match red region only (top corner is (0,0))
+              ii -= (green_dim[1]-1)
+              self.setAttr('Axial Slice (Blue)', val=jj)
+              self.setAttr('Coronal Slice (Green)', val=ii)
+            else:                                                                   # green region (cannot be control region)
+              self.setAttr('Axial Slice (Blue)', val=jj)
+              self.setAttr('Sagittal Slice (Red)', val=ii)
 
         self.setData('out data', combinedData)
         self.setData('sagittal slice', sagittalSlice)

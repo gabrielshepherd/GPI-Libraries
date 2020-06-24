@@ -38,8 +38,12 @@ import gpi
 from gpi import QtGui, QtWidgets
 import numpy as np
 from multiprocessing import Pool
+import time
 
-def process_slice(obj, data, dimfunc, outport):
+def process_slice(args):
+  print("hey")
+  obj, data, dimfunc, outport = args
+  print("here")
 
   # Read in parameters, make a little floor:ceiling adjustment
   gamma = obj.getVal('Gamma')
@@ -389,6 +393,7 @@ def process_slice(obj, data, dimfunc, outport):
   obj.setData(outport, imageTru)
 
   # construct boxes and 
+  print("imageTru is: " + str(imageTru))
   return imageTru
 
 # WIDGET
@@ -600,9 +605,12 @@ class ExternalNode(gpi.NodeAPI):
 
     # create pool
     p = Pool(processes=3)
-    output = p.map(process_slice, args)
+    output = p.map_async(process_slice, args)
+    # output = p.map_async(process_slice, args).get()
     p.close()
     p.join()
+    # time.sleep(1)
+    print("output tuple size is: " + str(np.shape(output)))
 
 
     # redRegion = process_slice(self, sagittalSlice, dimfunc=0, outport='sagittal slice')

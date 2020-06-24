@@ -385,7 +385,6 @@ def process_slice(obj, data, dimfunc, outport, xslice, yslice, zslice):
   imageTru[:, :, 1] = green
   imageTru[:, :, 2] = blue
   imageTru[:, :, 3] = alpha
-  obj.setData(outport, imageTru)
 
   # TODO: add borders and crosshairs
   if outport == 'sagittal slice': slice_type = 0
@@ -415,7 +414,7 @@ def process_slice(obj, data, dimfunc, outport, xslice, yslice, zslice):
                 buffer[i][j][0] = 255
             if j == yslice and ((i > 1 and i < (xslice-5)) or (i > (xslice+5) and i < (new_dim[0]-2))):
                 buffer[i][j][1] = 255
-  return buffer
+  return buffer, imageTru
 
 # WIDGET
 class WindowLevel(gpi.GenericWidgetGroup):
@@ -618,9 +617,9 @@ class ExternalNode(gpi.NodeAPI):
     self.setAttr('Range Min', val=minimum)
     self.setAttr('Range Max', val=maximum)
 
-    redRegion = process_slice(self, sagittalSlice, 0, 'sagittal slice', xslice, yslice, zslice)
-    greenRegion = process_slice(self, coronalSlice, 0, 'coronal slice', xslice, yslice, zslice)
-    blueRegion = process_slice(self, transverseSlice, 0, 'transverse slice', xslice, yslice, zslice)
+    redRegion, sagittalSliceImg = process_slice(self, sagittalSlice, 0, 'sagittal slice', xslice, yslice, zslice)
+    greenRegion, coronalSliceImg = process_slice(self, coronalSlice, 0, 'coronal slice', xslice, yslice, zslice)
+    blueRegion, transverseSliceImg = process_slice(self, transverseSlice, 0, 'transverse slice', xslice, yslice, zslice)
 
     combine1 = np.append(greenRegion, blueRegion, axis=1)
     pad = np.zeros([dim[1]+4, dim[1]+4, 4], dtype=redRegion.dtype)
@@ -642,5 +641,50 @@ class ExternalNode(gpi.NodeAPI):
     if image.isNull():
       self.log.warn("Image Viewer: cannot load image")
     self.setAttr('Viewport:', val=image)
+
+    # green_dim is a remnant of a bygone era; is reused here to save time and confusion for the author
+    green_dim = [dim[0], dim[2]]
+
+    # attempt to get line end coordinates
+    line = self.getAttr('Viewport:', 'line')
+    if line:
+      i0, j0 = line[0]
+      i1, j1 = line[1]
+      # slicer and volumetric mode
+      if ((j0 > (green_dim[0]-1)) and (j1 > (green_dim[0]-1))) \
+        and ((i0 < (green_dim[1]-1)) and (i1 < (green_dim[1]-1))):
+        self.setData('out', img)
+        self.setData('sagittal slice', sagittalSliceImg)
+        self.setData('coronal slice', coronalSliceImg)
+        self.setData('transverse slice', transverseSliceImg)
+      else:
+        if ((j0 > (green_dim[0]-1)) or (j1 > (green_dim[0]-1))) \
+          and ((i0 < (green_dim[1]-1)) or (i1 < (green_dim[1]-1))): # slicer mode
+          if (j0 > (green_dim[0]-1)) and (i0 < (green_dim[1]-1)):    # first point is in control box
+            ii = i1
+            jj = j1
+          else:                                                     # second point is in control box
+            ii = i0
+            jj = j0
+        else:                                                                     # volume mode
+          ii = (i0 + i1)//2
+          jj = (j0 + j1)//2
+          i_width = abs(i0 - i1) + 1
+          j_width = abs(j0 - j1) + 1
+        # determine which box we are playing in
+        if (ii > (green_dim[1]-1)) and  (jj > (green_dim[0]-1)):                # blue region
+          # adjust coordinates to match blue region only (top corner is (0,0))
+          ii -= (green_dim[1]-1)
+          jj -= (green_dim[0]-1)
+          self.setAttr('Coronal Slice (Green)', val=jj)
+          self.setAttr('Sagittal Slice (Red)', val=ii)
+        elif ii > (green_dim[1]-1):                                             # red region
+          # adjust coordinates to match red region only (top corner is (0,0))
+          ii -= (green_dim[1]-1)
+          self.setAttr('Axial Slice (Blue)', val=jj)
+          self.setAttr('Coronal Slice (Green)', val=ii)
+        else:                                                                   # green region (cannot be control region)
+          self.setAttr('Axial Slice (Blue)', val=jj)
+          self.setAttr('Sagittal Slice (Red)', val=ii)
 
     return 0

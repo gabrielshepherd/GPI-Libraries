@@ -604,13 +604,33 @@ class ExternalNode(gpi.NodeAPI):
     )
 
     # create pool
-    p = Pool(processes=3)
-    output = p.map_async(process_slice, args)
-    # output = p.map_async(process_slice, args).get()
+    # p = Pool(processes=3)
+    # output = []
+    # r = p.map_async(process_slice, args, callback=output.append)
+    # # output = p.map_async(process_slice, args).get()
+    # # r.wait()
+    # p.close()
+    # p.join()
+    # r.get()
+    # output.wait()
+    # time.sleep(1)
+    p = Pool()
+    results = []
+    for k in range(2):
+      slice_args = args[k]
+      results.append(p.apply_async(process_slice, slice_args))
+    
     p.close()
     p.join()
-    # time.sleep(1)
-    print("output tuple size is: " + str(np.shape(output)))
+
+    print("output tuple size is: " + str(np.shape(results)))
+    imageData = results[0]                              # just first slice
+    print(np.shape(imageData))
+    red, green, blue, alpha = imageData
+
+    # print("output tuple size is: " + str(np.shape(output)))
+    # print("output tuple size is: " + str(np.shape(r)))
+
 
 
     # redRegion = process_slice(self, sagittalSlice, dimfunc=0, outport='sagittal slice')
@@ -618,27 +638,27 @@ class ExternalNode(gpi.NodeAPI):
     # blueRegion = process_slice(self, transverseSlice, dimfunc=0, outport='transverse slice')
 
 
-    # h, w = red.shape[:2]
-    # image1 = np.zeros((h, w, 4), dtype=np.uint8)
-    # image1[:, :, 0] = red
-    # image1[:, :, 1] = green
-    # image1[:, :, 2] = blue
-    # image1[:, :, 3] = alpha
-    # format_ = QtGui.QImage.Format_RGB32
+    h, w = red.shape[:2]
+    image1 = np.zeros((h, w, 4), dtype=np.uint8)
+    image1[:, :, 0] = red
+    image1[:, :, 1] = green
+    image1[:, :, 2] = blue
+    image1[:, :, 3] = alpha
+    format_ = QtGui.QImage.Format_RGB32
 
-    # image = QtGui.QImage(image1.data, w, h, format_)
+    image = QtGui.QImage(image1.data, w, h, format_)
 
-    #send the RGB values to the output port
-    # imageTru = np.zeros((h, w, 4), dtype=np.uint8)
-    # imageTru[:, :, 0] = red
-    # imageTru[:, :, 1] = green
-    # imageTru[:, :, 2] = blue
-    # imageTru[:, :, 3] = alpha
-    # image.ndarray = imageTru
-    # if image.isNull():
-    #   self.log.warn("Image Viewer: cannot load image")
+    # send the RGB values to the output port
+    imageTru = np.zeros((h, w, 4), dtype=np.uint8)
+    imageTru[:, :, 0] = red
+    imageTru[:, :, 1] = green
+    imageTru[:, :, 2] = blue
+    imageTru[:, :, 3] = alpha
+    image.ndarray = imageTru
+    if image.isNull():
+      self.log.warn("Image Viewer: cannot load image")
 
-    # self.setAttr('Viewport:', val=image)
-    # self.setData('out',imageTru)
+    self.setAttr('Viewport:', val=image)
+    self.setData('out',imageTru)
 
     return 0

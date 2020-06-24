@@ -623,8 +623,11 @@ class ExternalNode(gpi.NodeAPI):
     p.close()
     p.join()
 
-    print("output tuple size is: " + str(np.shape(results)))
-    imageData = results[0]                              # just first slice
+    results = [result.get()[:, np.newaxis, ...] for result in results]
+    outdat = np.concatenate(results, axis=1)
+
+    print("output tuple size is: " + str(np.shape(outdat)))
+    imageData = outdat[0]                              # just first slice
     print(np.shape(imageData))
     red, green, blue, alpha = imageData
 

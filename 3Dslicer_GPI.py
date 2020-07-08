@@ -38,9 +38,7 @@ import gpi
 from gpi import QtGui, QtWidgets
 import numpy as np
 
-def process_slice(obj, data, dimfunc, outport, xslice, yslice, zslice):
-
-  # Read in parameters, make a little floor:ceiling adjustment
+def colorthings(obj, data, dimfunc):# Read in parameters, make a little floor:ceiling adjustment
   gamma = obj.getVal('Gamma')
   lval = obj.getAttr('L W F C:', 'val')
   cval = obj.getVal('Complex Display')
@@ -385,36 +383,64 @@ def process_slice(obj, data, dimfunc, outport, xslice, yslice, zslice):
   imageTru[:, :, 1] = green
   imageTru[:, :, 2] = blue
   imageTru[:, :, 3] = alpha
+  return imageTru
 
-  # TODO: add borders and crosshairs
-  if outport == 'sagittal slice': slice_type = 0
-  elif outport == 'coronal slice': slice_type = 1
-  elif outport == 'transverse slice': slice_type = 2
+def process_slice(obj, data, dimfunc, outport, islice, jslice, kslice, i_width, j_width, k_width):
+
+  imageTru = colorthings(obj, data, dimfunc)
   dim = list(np.shape(imageTru))
-  buffer = np.zeros([dim[0]+4, dim[1]+4, dim[2]], dtype=imageTru.dtype)
-  new_dim = list(np.shape(buffer))
-  for i in range(new_dim[0]):
-    for j in range(new_dim[1]):
-        if i > 1 and j > 1 and i < (new_dim[0]-2) and j < (new_dim[1]-2):
-            buffer[i][j] = imageTru[i-2, j-2, :]
-        else:
-            buffer[i][j][slice_type] = 255
-        if slice_type == 0:                                             # slice1 --> red slice
-            if i == yslice and ((j > 1 and j < (zslice-5)) or (j > (zslice+5) and j < (new_dim[1]-2))):
-                buffer[i][j][1] = 255
-            if j == zslice and ((i > 1 and i < (yslice-5)) or (i > (yslice+5) and i < (new_dim[0]-2))):
-                buffer[i][j][2] = 255
-        elif slice_type == 1:                                           # slice2 --> green slice
-            if i == xslice and ((j > 1 and j < (zslice-5)) or (j > (zslice+5) and j < (new_dim[1]-2))):
-                buffer[i][j][0] = 255
-            if j == zslice and ((i > 1 and i < (xslice-5)) or (i > (xslice+5) and i < (new_dim[0]-2))):
-                buffer[i][j][2] = 255
-        elif slice_type == 2:                                           # slice3 --> blue slice
-            if i == xslice and ((j > 1 and j < (yslice-5)) or (j > (yslice+5) and j < (new_dim[1]-2))):
-                buffer[i][j][0] = 255
-            if j == yslice and ((i > 1 and i < (xslice-5)) or (i > (xslice+5) and i < (new_dim[0]-2))):
-                buffer[i][j][1] = 255
-  return buffer, imageTru
+
+  # define colors --> I have no idea why the colors work this way but this is the correct formatting
+  r = [0, 0, 255, 0]
+  b = [255, 0, 0, 0]
+  g = [0, 255, 0, 0]
+
+  # define border and crosshair colors by plane; also define widths for that dimension
+  if outport == 'sagittal slice':
+    border = g
+    hori_crosshair = b
+    vert_crosshair = r
+    iwidth = i_width
+    jwidth = j_width
+    icenter = islice
+    jcenter = jslice
+  elif outport == 'coronal slice':
+    border = r
+    hori_crosshair = b
+    vert_crosshair = g
+    iwidth = i_width
+    jwidth = k_width
+    icenter = islice
+    jcenter = kslice
+  elif outport == 'transverse slice':
+    border = b
+    hori_crosshair = r
+    vert_crosshair = g
+    iwidth = j_width
+    jwidth = k_width
+    icenter = jslice
+    jcenter = kslice
+    
+  # add border
+  img = np.stack([np.pad(imageTru[:,:,c], ([2, 2]), mode='constant', constant_values=border[c]) for c in range(4)], axis=2)
+
+  # add crosshairs
+  # vertical
+  vert1 = jcenter - ((jwidth - 1)//2)
+  vert2 = jcenter + (jwidth//2)
+  hori1 = icenter - ((iwidth - 1)//2)
+  hori2 = icenter + (iwidth//2)
+  for i in range(2, dim[0]-1):
+    if i < (icenter-5) or i > (icenter+5):
+      img[i, vert1] = vert_crosshair
+      if iwidth != 1:
+        img[i, vert2] = vert_crosshair
+  for j in range(2, dim[1]-1):
+    if j <(jcenter-5) or j > (jcenter+5):
+      img[hori1, j] = hori_crosshair
+      if jwidth != 1:
+        img[hori2, j] = hori_crosshair
+  return img, imageTru
 
 # WIDGET
 class WindowLevel(gpi.GenericWidgetGroup):
@@ -555,8 +581,8 @@ class ExternalNode(gpi.NodeAPI):
     self.addWidget('SpinBox', 'Black Pixels', min=0)
     self.addWidget('DisplayBox', 'Viewport:')
     self.addWidget('Slider', 'Axial Slice (Blue)', val=1, min=0, max=40)  # only initial values
-    self.addWidget('Slider', 'Coronal Slice (Green)', val=1, min=0, max=40)
-    self.addWidget('Slider', 'Sagittal Slice (Red)', val=1, min=0, max=40)
+    self.addWidget('Slider', 'Coronal Slice (Red)', val=1, min=0, max=40)
+    self.addWidget('Slider', 'Sagittal Slice (Green)', val=1, min=0, max=40)
     self.addWidget('SpinBox', '# Columns', val=1)
     self.addWidget('SpinBox', '# Rows', val=1)
     self.addWidget('WindowLevel', 'L W F C:', collapsed=True)
@@ -568,6 +594,9 @@ class ExternalNode(gpi.NodeAPI):
     self.addWidget('PushButton', 'Fix Range', button_title='Auto-Range On', toggle=True)
     self.addWidget('DoubleSpinBox', 'Range Min')
     self.addWidget('DoubleSpinBox', 'Range Max')
+    self.addWidget('SpinBox', 'i width', min=0, max=40, val=1)
+    self.addWidget('SpinBox', 'j width', min=0, max=40, val=1)
+    self.addWidget('SpinBox', 'k width', min=0, max=40, val=1)
 
     # IO Ports
     self.addInPort('in', 'NPYarray', drange=(2,3))
@@ -590,6 +619,9 @@ class ExternalNode(gpi.NodeAPI):
     self.setAttr('Zero Ref',visible=False)
     self.setAttr('# Rows', visible=False)
     self.setAttr('# Columns', visible=False)
+    self.setAttr('i width', visible=False)
+    self.setAttr('j width', visible=False)
+    self.setAttr('k width', visible=False)
     if self.getVal('Fix Range'):
       self.setAttr('Fix Range',button_title="Fixed Range On")
     else:
@@ -600,35 +632,42 @@ class ExternalNode(gpi.NodeAPI):
 
     from matplotlib import cm
 
+    # get and format data
     data3d = self.getData('in').astype(np.float64)
     dim = list(np.shape(data3d))
     # reset default values with the values from the dimensions of the input data
-    self.setAttr('Axial Slice (Blue)', max=dim[0])
-    self.setAttr('Coronal Slice (Green)', max=dim[1])
-    self.setAttr('Sagittal Slice (Red)', max=dim[2])
-    xslice = self.getVal('Axial Slice (Blue)')
-    yslice = self.getVal('Coronal Slice (Green)')
-    zslice = self.getVal('Sagittal Slice (Red)')
-    sagittalSlice = data3d[xslice, :, :] 
-    coronalSlice = data3d[:, yslice, :]      
-    transverseSlice = data3d[:, :, zslice]
-    maximum = np.max([np.max(sagittalSlice), np.max(coronalSlice), np.max(transverseSlice)])
-    minimum = np.min([np.min(sagittalSlice), np.min(coronalSlice), np.min(transverseSlice)])
+    self.setAttr('Axial Slice (Blue)', max=dim[0]-1)
+    self.setAttr('Coronal Slice (Red)', max=dim[1]-1)
+    self.setAttr('Sagittal Slice (Green)', max=dim[2]-1)
+    islice = self.getVal('Axial Slice (Blue)')
+    jslice = self.getVal('Coronal Slice (Red)')
+    kslice = self.getVal('Sagittal Slice (Green)')
+    iwidth = self.getVal('i width')
+    jwidth = self.getVal('j width')
+    kwidth = self.getVal('k width')
+    axialSlice = data3d[islice, :, :] 
+    coronalSlice = data3d[:, jslice, :]
+    sagittalSlice = data3d[:, :, kslice]
+    maximum = np.max([np.max(sagittalSlice), np.max(coronalSlice), np.max(axialSlice)])
+    minimum = np.min([np.min(sagittalSlice), np.min(coronalSlice), np.min(axialSlice)])
     self.setAttr('Range Min', val=minimum)
     self.setAttr('Range Max', val=maximum)
 
-    redRegion, sagittalSliceImg = process_slice(self, sagittalSlice, 0, 'sagittal slice', xslice, yslice, zslice)
-    greenRegion, coronalSliceImg = process_slice(self, coronalSlice, 0, 'coronal slice', xslice, yslice, zslice)
-    blueRegion, transverseSliceImg = process_slice(self, transverseSlice, 0, 'transverse slice', xslice, yslice, zslice)
+    # get and process slices
+    greenRegion, sagittalSliceImg = process_slice(self, sagittalSlice, 0, 'sagittal slice', islice, jslice, kslice, iwidth, jwidth, kwidth)
+    redRegion, coronalSliceImg = process_slice(self, coronalSlice, 0, 'coronal slice', islice, jslice, kslice, iwidth, jwidth, kwidth)
+    blueRegion, axialSliceImg = process_slice(self, axialSlice, 0, 'transverse slice', islice, jslice, kslice, iwidth, jwidth, kwidth)
 
-    combine1 = np.append(greenRegion, blueRegion, axis=1)
-    pad = np.zeros([dim[1]+4, dim[1]+4, 4], dtype=redRegion.dtype)
-    combine2 = np.append(pad, redRegion, axis=1)
+    # combine all slices into one image
+    combine1 = np.append(redRegion, greenRegion, axis=1)
+    pad = np.zeros([dim[1]+4, dim[1]+4, 4], dtype=greenRegion.dtype)
+    combine2 = np.append(pad, blueRegion, axis=1)
     img = np.append(combine1, combine2, axis=0)
 
+    # format and display image in Viewport
     red = img[:, :, 0]
-    blue = img[:, :, 1]
-    green = img[:, :, 2]
+    green = img[:, :, 1]
+    blue = img[:, :, 2]
     alpha = img[:, :, 3]
     h, w = red.shape[:2]
     image1 = np.zeros((h, w, 4), dtype=np.uint8)
@@ -641,50 +680,4 @@ class ExternalNode(gpi.NodeAPI):
     if image.isNull():
       self.log.warn("Image Viewer: cannot load image")
     self.setAttr('Viewport:', val=image)
-
-    # green_dim is a remnant of a bygone era; is reused here to save time and confusion for the author
-    green_dim = [dim[0], dim[2]]
-
-    # attempt to get line end coordinates
-    line = self.getAttr('Viewport:', 'line')
-    if line:
-      i0, j0 = line[0]
-      i1, j1 = line[1]
-      # slicer and volumetric mode
-      if ((j0 > (green_dim[0]-1)) and (j1 > (green_dim[0]-1))) \
-        and ((i0 < (green_dim[1]-1)) and (i1 < (green_dim[1]-1))):
-        self.setData('out', img)
-        self.setData('sagittal slice', sagittalSliceImg)
-        self.setData('coronal slice', coronalSliceImg)
-        self.setData('transverse slice', transverseSliceImg)
-      else:
-        if ((j0 > (green_dim[0]-1)) or (j1 > (green_dim[0]-1))) \
-          and ((i0 < (green_dim[1]-1)) or (i1 < (green_dim[1]-1))): # slicer mode
-          if (j0 > (green_dim[0]-1)) and (i0 < (green_dim[1]-1)):    # first point is in control box
-            ii = i1
-            jj = j1
-          else:                                                     # second point is in control box
-            ii = i0
-            jj = j0
-        else:                                                                     # volume mode
-          ii = (i0 + i1)//2
-          jj = (j0 + j1)//2
-          i_width = abs(i0 - i1) + 1
-          j_width = abs(j0 - j1) + 1
-        # determine which box we are playing in
-        if (ii > (green_dim[1]-1)) and  (jj > (green_dim[0]-1)):                # blue region
-          # adjust coordinates to match blue region only (top corner is (0,0))
-          ii -= (green_dim[1]-1)
-          jj -= (green_dim[0]-1)
-          self.setAttr('Coronal Slice (Green)', val=jj)
-          self.setAttr('Sagittal Slice (Red)', val=ii)
-        elif ii > (green_dim[1]-1):                                             # red region
-          # adjust coordinates to match red region only (top corner is (0,0))
-          ii -= (green_dim[1]-1)
-          self.setAttr('Axial Slice (Blue)', val=jj)
-          self.setAttr('Coronal Slice (Green)', val=ii)
-        else:                                                                   # green region (cannot be control region)
-          self.setAttr('Axial Slice (Blue)', val=jj)
-          self.setAttr('Sagittal Slice (Red)', val=ii)
-
     return 0

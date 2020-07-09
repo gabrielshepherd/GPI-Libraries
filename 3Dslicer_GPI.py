@@ -400,16 +400,16 @@ def process_slice(obj, data, dimfunc, outport, islice, jslice, kslice, i_width, 
     border = g
     hori_crosshair = b
     vert_crosshair = r
-    iwidth = i_width
-    jwidth = j_width
+    jwidth = i_width
+    iwidth = j_width
     icenter = islice
     jcenter = jslice
   elif outport == 'coronal slice':
     border = r
     hori_crosshair = b
     vert_crosshair = g
-    iwidth = i_width
-    jwidth = k_width
+    jwidth = i_width
+    iwidth = k_width
     icenter = islice
     jcenter = kslice
   elif outport == 'transverse slice':
@@ -425,21 +425,26 @@ def process_slice(obj, data, dimfunc, outport, islice, jslice, kslice, i_width, 
   img = np.stack([np.pad(imageTru[:,:,c], ([2, 2]), mode='constant', constant_values=border[c]) for c in range(4)], axis=2)
 
   # add crosshairs
-  # vertical
-  vert1 = jcenter - ((jwidth - 1)//2)
-  vert2 = jcenter + (jwidth//2)
-  hori1 = icenter - ((iwidth - 1)//2)
-  hori2 = icenter + (iwidth//2)
-  for i in range(2, dim[0]-1):
-    if i < (icenter-5) or i > (icenter+5):
+  vert1 = jcenter - ((iwidth - 1)//2)
+  vert2 = jcenter + (iwidth//2)
+  hori1 = icenter - ((jwidth - 1)//2)
+  hori2 = icenter + (jwidth//2)
+  print("iwidth: " + str(iwidth))
+  print("jwidth: " + str(jwidth))
+  if iwidth == 1 and jwidth == 1:
+    for i in range(2, dim[0]-1):
+      if i < (icenter-5) or i > (icenter+5):
+        img[i, vert1] = vert_crosshair
+    for j in range(2, dim[1]-1):
+      if j <(jcenter-5) or j > (jcenter+5):
+        img[hori1, j] = hori_crosshair
+  else:
+    for i in range(2, dim[0]-1):
       img[i, vert1] = vert_crosshair
-      if iwidth != 1:
-        img[i, vert2] = vert_crosshair
-  for j in range(2, dim[1]-1):
-    if j <(jcenter-5) or j > (jcenter+5):
+      img[i, vert2] = vert_crosshair
+    for j in range(2, dim[1]-1):
       img[hori1, j] = hori_crosshair
-      if jwidth != 1:
-        img[hori2, j] = hori_crosshair
+      img[hori2, j] = hori_crosshair
   return img, imageTru
 
 # WIDGET
@@ -597,6 +602,7 @@ class ExternalNode(gpi.NodeAPI):
     self.addWidget('SpinBox', 'i width', min=0, max=40, val=1)
     self.addWidget('SpinBox', 'j width', min=0, max=40, val=1)
     self.addWidget('SpinBox', 'k width', min=0, max=40, val=1)
+    self.addWidget('SpinBox', 'volume', min=0, max=1, val=0)
 
     # IO Ports
     self.addInPort('in', 'NPYarray', drange=(2,3))
@@ -630,15 +636,79 @@ class ExternalNode(gpi.NodeAPI):
 
   def compute(self):
 
+    # events = self.getEvents()
+    # print(str(events['_WDG_EVENT_']))
+
     from matplotlib import cm
 
     # get and format data
     data3d = self.getData('in').astype(np.float64)
     dim = list(np.shape(data3d))
+    save = False
+
+    # slicer and volume mode here
+    line = self.getAttr('Viewport:', 'line')
+    if line:
+      red_dim = [dim[0], dim[2]]
+      i0, j0 = line[0]
+      i1, j1 = line[1]
+      # is there an endpoint in the control box?
+      if ((j0 > (red_dim[0]-1)) or (j1 > (red_dim[0]-1))) and ((i0 < (red_dim[1]-1)) or (i1 < (red_dim[1]-1))):
+        if (j0 > (red_dim[0]-1)) and (j1 > (red_dim[0]-1)) and (i0 < (red_dim[1]-1)) and (i1 < (red_dim[1]-1)):
+          save = True
+        else:
+          self.setAttr('volume', val=0)
+          self.setAttr('i width', val=1)
+          self.setAttr('j width', val=1)
+          self.setAttr('k width', val=1)
+          if (j0 > (red_dim[0]-1)) and (i0 < (red_dim[1]-1)):                 # first point is in control box
+            ii = i1
+            jj = j1
+          else:                                                               # second point is in control box
+            ii = i0
+            jj = j0
+      else:                       # volume mode
+        self.setAttr('volume', val=1)
+        # calculate centers
+        ii = (i0 + i1)//2
+        jj = (j0 + j1)//2
+        # calculate widths
+        i_width = abs(i0 - i1) + 1
+        j_width = abs(j0 - j1) + 1
+        # check to make sure that both endpoints are in the same zone
+        if i0 > (red_dim[1]+3) and  j0 > (red_dim[0]+3) and i1 > (red_dim[1]+3) and  j1 > (red_dim[0]+3):
+          self.setAttr('j width', val=i_width)
+          self.setAttr('k width', val=j_width)
+        elif i0 > (red_dim[1]+3) and  i1 > (red_dim[1]+3) and j0 < (red_dim[0]+3) and j1 < (red_dim[1]+3):
+          self.setAttr('i width', val=j_width)
+          self.setAttr('j width', val=i_width)
+        elif i0 < (red_dim[1]+3) and  i1 < (red_dim[1]+3) and j0 < (red_dim[0]+3) and j1 < (red_dim[1]+3):
+          self.setAttr('i width', val=j_width)
+          self.setAttr('k width', val=i_width)
+        else:
+          self.log.error("You cannot draw a box in two different slices!")
+      # update centers based on which zone we are in
+      if save is not True:
+        if (ii > (red_dim[1]+3)) and  (jj > (red_dim[0]+3)):
+          ii -= (red_dim[1]+4)
+          jj -= (red_dim[0]+4)
+          self.setAttr('Coronal Slice (Red)', val=jj)
+          self.setAttr('Sagittal Slice (Green)', val=ii)
+        elif ii > (red_dim[1]+3):
+          ii -= (red_dim[1]+4)
+          self.setAttr('Axial Slice (Blue)', val=jj)
+          self.setAttr('Coronal Slice (Red)', val=ii)
+        else:
+          self.setAttr('Axial Slice (Blue)', val=jj)
+          self.setAttr('Sagittal Slice (Green)', val=ii)
+
     # reset default values with the values from the dimensions of the input data
     self.setAttr('Axial Slice (Blue)', max=dim[0]-1)
     self.setAttr('Coronal Slice (Red)', max=dim[1]-1)
     self.setAttr('Sagittal Slice (Green)', max=dim[2]-1)
+    self.setAttr('i width', max=dim[0]-1)
+    self.setAttr('j width', max=dim[1]-1)
+    self.setAttr('k width', max=dim[2]-1)
     islice = self.getVal('Axial Slice (Blue)')
     jslice = self.getVal('Coronal Slice (Red)')
     kslice = self.getVal('Sagittal Slice (Green)')
@@ -680,4 +750,49 @@ class ExternalNode(gpi.NodeAPI):
     if image.isNull():
       self.log.warn("Image Viewer: cannot load image")
     self.setAttr('Viewport:', val=image)
+
+    # output volume and slices
+    if save is True or True:                            # override to always save for now
+      zz = int(self.getVal('Sagittal Slice (Green)'))
+      yy = int(self.getVal('Coronal Slice (Red)'))
+      xx = int(self.getVal('Axial Slice (Blue)'))
+      print("xx: " + str(xx))
+      print("yy: " + str(yy))
+      print("zz: " + str(zz))
+      # retrieve volume
+      if int(self.getVal('volume')) == 1:
+        # get widths
+        x_width = int(self.getVal('i width'))
+        y_width = int(self.getVal('j width'))
+        z_width = int(self.getVal('k width'))
+        print("x width: " + str(x_width))
+        print("y width: " + str(y_width))
+        print("z width: " + str(z_width))
+        # calculate ranges for x, y & z
+        x0 = xx - ((x_width-1)//2)
+        x1 = xx + (x_width//2)
+        y0 = yy - ((y_width-1)//2)
+        y1 = yy + (y_width//2)
+        z0 = zz - ((z_width-1)//2)
+        z1 = zz + (z_width//2)
+        print("x0: " + str(x0))
+        print("x1: " + str(x1))
+        print("y0: " + str(y0))
+        print("y1: " + str(y1))
+        print("z0: " + str(z0))
+        print("z1: " + str(z1))
+        # output array
+        if x0 == x1: x1 += 1
+        elif y0 == y1: y1 += 1
+        elif z0 == z1: z1 += 1
+        if x_width != 1: x_width = x1 - x0
+        if y_width != 1: y_width = y1 - y0
+        if z_width != 1: z_width = z1 - z0
+        outArray = np.reshape(np.array(data3d[x0:x1, y0:y1, z0:z1]), (x_width, y_width, z_width))
+      else:                                 # added this line because it will be faster to hardcode in values for this case since they are already known
+        outArray = np.reshape(np.array(data3d[xx][yy][zz]), (1, 1, 1))
+      self.setData('out', outArray)
+      self.setData('sagittal slice', sagittalSliceImg)
+      self.setData('coronal slice', coronalSliceImg)
+      self.setData('transverse slice', axialSliceImg)
     return 0

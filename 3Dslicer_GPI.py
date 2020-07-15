@@ -31,8 +31,8 @@
 # License along with the GPI core node library. If not, see
 # <http://www.gnu.org/licenses/>.
 
-# Author: Jim Pipe / Nick Zwart
-# Date: 2013 Sep 01
+# Author: Gabe Shepherd
+# Date: July 2020
 
 import gpi
 from gpi import QtGui, QtWidgets
@@ -56,9 +56,11 @@ def colorthings(obj, data, dimfunc):# Read in parameters, make a little floor:ce
   cmap = obj.getVal('Color Map')
   sval = obj.getVal('Scalar Display')
   zval = obj.getVal('Zero Ref')
-  fval = obj.getVal('Fix Range')
+  fval = True
   rmin = obj.getVal('Range Min')
+  print(rmin)
   rmax = obj.getVal('Range Max')
+  print(rmax)
 
   flor = 0.01*lval['floor']
   ceil = 0.01*lval['ceiling']
@@ -416,8 +418,8 @@ def process_slice(obj, data, dimfunc, outport, islice, jslice, kslice, i_width, 
     border = b
     hori_crosshair = r
     vert_crosshair = g
-    iwidth = j_width
-    jwidth = k_width
+    iwidth = k_width
+    jwidth = j_width
     icenter = jslice
     jcenter = kslice
     
@@ -429,8 +431,6 @@ def process_slice(obj, data, dimfunc, outport, islice, jslice, kslice, i_width, 
   vert2 = jcenter + (iwidth//2)
   hori1 = icenter - ((jwidth - 1)//2)
   hori2 = icenter + (jwidth//2)
-  print("iwidth: " + str(iwidth))
-  print("jwidth: " + str(jwidth))
   if iwidth == 1 and jwidth == 1:
     for i in range(2, dim[0]-1):
       if i < (icenter-5) or i > (icenter+5):
@@ -514,14 +514,16 @@ class WindowLevel(gpi.GenericWidgetGroup):
 
 
 class ExternalNode(gpi.NodeAPI):
-  """2D image viewer for real or complex NPYarrays.
+  """displays axial, sagittal, and coronal slices of the inputted volume.
 
   INPUT:
-  2D data, real or complex
-  3D uint8 ARGB data (e.g. output of another ImageDisplay node)
+  3D non-RGBA data (Numpy array)
 
   OUTPUT:
-  3D data of displayed image, last dimension has length 4 for ARGB byte (uint8) data
+  1. volume subset defined by crosshairs in each plane
+  2. sagittal slice (no crosshairs)
+  3. coronal slice (no crosshairs)
+  4. transverse slice (no crosshairs)
 
   WIDGETS:
   Complex Display - If data are complex, allows you to show Real, Imaginary, Magnitude, Phase, or "Complex" data.
@@ -539,6 +541,23 @@ class ExternalNode(gpi.NodeAPI):
 
   Viewport - displays the image
     Double clicking on Viewport area brings up a scaling widget to change the image size, and change graphic overlay
+  
+  2D Image Type - set the type of image to be displayed
+    Mean - collapses data along the width of the axis orthagonal to the plane and displays the mean
+    Max - collapses data along the width of the axis orthagonal to the plane and displays the max
+    Min - collapses data along the width of the axis orthagonal to the plane and displays the min
+    Center - just displays the slice defined by the sliders
+  
+  Min/Max Calculated From - sets the criteria for which the min and max are set
+    Slices - min and max are set from the 3 slices to be displayed
+    Volume - min and max are set from the entire volume
+    ** min and max may also be set manually; values will be reset by toggling one of these buttons
+  
+  Axial Slice (Blue) - slider that defines the center slice for the axial plane
+  
+  Coronal Slice (Red) - slider that defines the center slice for the coronal plane
+
+  Sagittal Slice (Red) - slider that defines the center slice for the sagittal plane
 
   L W F C - (hidden by default - double click on widget area to show sliders)
             Adjust value-to-pixel brightness mapping using Level/Window or Floor/Ceiling
@@ -568,6 +587,14 @@ class ExternalNode(gpi.NodeAPI):
 
   Range Max - shows maximum data value used for mapping to pixel values
     This value can be changed if (and only if) "Fix Range" is set to "Fixed-Ranged On"
+  
+  i width - hidden widget the sets the value of the width in the "i" direction (normal to the axial plane)
+
+  j width - hidden widget the sets the value of the width in the "j" direction (normal to the coronal plane)
+
+  k width - hidden widget the sets the value of the width in the "k" direction (normal to the sagittal plane)
+
+  volume - boolean (actually integer that can only be 0 or 1) that determines if volume mode is activated
   """
 
   def execType(self):
@@ -585,6 +612,10 @@ class ExternalNode(gpi.NodeAPI):
     self.addWidget('SpinBox', 'Edge Pixels', min=0)
     self.addWidget('SpinBox', 'Black Pixels', min=0)
     self.addWidget('DisplayBox', 'Viewport:')
+    self.addWidget('ExclusivePushButtons','2D Image Type',
+                    buttons=['Mean', 'Max', 'Min', 'Center'], val=3)
+    self.addWidget('ExclusivePushButtons','Min/Max Calculated From: ',
+                    buttons=['Slices', 'Volume'], val=0)
     self.addWidget('Slider', 'Axial Slice (Blue)', val=1, min=0, max=40)  # only initial values
     self.addWidget('Slider', 'Coronal Slice (Red)', val=1, min=0, max=40)
     self.addWidget('Slider', 'Sagittal Slice (Green)', val=1, min=0, max=40)
@@ -628,6 +659,8 @@ class ExternalNode(gpi.NodeAPI):
     self.setAttr('i width', visible=False)
     self.setAttr('j width', visible=False)
     self.setAttr('k width', visible=False)
+    self.setAttr('volume', visible=False)
+    self.setAttr('Fix Range', visible=False)
     if self.getVal('Fix Range'):
       self.setAttr('Fix Range',button_title="Fixed Range On")
     else:
@@ -635,9 +668,6 @@ class ExternalNode(gpi.NodeAPI):
     return 0
 
   def compute(self):
-
-    # events = self.getEvents()
-    # print(str(events['_WDG_EVENT_']))
 
     from matplotlib import cm
 
@@ -649,19 +679,19 @@ class ExternalNode(gpi.NodeAPI):
     # slicer and volume mode here
     line = self.getAttr('Viewport:', 'line')
     if line:
-      red_dim = [dim[0], dim[2]]
+      green_dim = [dim[0], dim[1]]
       i0, j0 = line[0]
       i1, j1 = line[1]
       # is there an endpoint in the control box?
-      if ((j0 > (red_dim[0]-1)) or (j1 > (red_dim[0]-1))) and ((i0 < (red_dim[1]-1)) or (i1 < (red_dim[1]-1))):
-        if (j0 > (red_dim[0]-1)) and (j1 > (red_dim[0]-1)) and (i0 < (red_dim[1]-1)) and (i1 < (red_dim[1]-1)):
+      if ((j0 > (green_dim[0]-1)) or (j1 > (green_dim[0]-1))) and ((i0 < (green_dim[1]-1)) or (i1 < (green_dim[1]-1))):
+        if (j0 > (green_dim[0]-1)) and (j1 > (green_dim[0]-1)) and (i0 < (green_dim[1]-1)) and (i1 < (green_dim[1]-1)):
           save = True
         else:
           self.setAttr('volume', val=0)
           self.setAttr('i width', val=1)
           self.setAttr('j width', val=1)
           self.setAttr('k width', val=1)
-          if (j0 > (red_dim[0]-1)) and (i0 < (red_dim[1]-1)):                 # first point is in control box
+          if (j0 > (green_dim[0]-1)) and (i0 < (green_dim[1]-1)):                 # first point is in control box
             ii = i1
             jj = j1
           else:                                                               # second point is in control box
@@ -676,31 +706,31 @@ class ExternalNode(gpi.NodeAPI):
         i_width = abs(i0 - i1) + 1
         j_width = abs(j0 - j1) + 1
         # check to make sure that both endpoints are in the same zone
-        if i0 > (red_dim[1]+3) and  j0 > (red_dim[0]+3) and i1 > (red_dim[1]+3) and  j1 > (red_dim[0]+3):
-          self.setAttr('j width', val=i_width)
-          self.setAttr('k width', val=j_width)
-        elif i0 > (red_dim[1]+3) and  i1 > (red_dim[1]+3) and j0 < (red_dim[0]+3) and j1 < (red_dim[1]+3):
-          self.setAttr('i width', val=j_width)
-          self.setAttr('j width', val=i_width)
-        elif i0 < (red_dim[1]+3) and  i1 < (red_dim[1]+3) and j0 < (red_dim[0]+3) and j1 < (red_dim[1]+3):
+        if i0 > (green_dim[1]+3) and  j0 > (green_dim[0]+3) and i1 > (green_dim[1]+3) and  j1 > (green_dim[0]+3):
+          self.setAttr('j width', val=j_width)
+          self.setAttr('k width', val=i_width)
+        elif i0 > (green_dim[1]+3) and  i1 > (green_dim[1]+3) and j0 < (green_dim[0]+3) and j1 < (green_dim[1]+3):
           self.setAttr('i width', val=j_width)
           self.setAttr('k width', val=i_width)
+        elif i0 < (green_dim[1]+3) and  i1 < (green_dim[1]+3) and j0 < (green_dim[0]+3) and j1 < (green_dim[1]+3):
+          self.setAttr('i width', val=j_width)
+          self.setAttr('j width', val=i_width)
         else:
           self.log.error("You cannot draw a box in two different slices!")
       # update centers based on which zone we are in
       if save is not True:
-        if (ii > (red_dim[1]+3)) and  (jj > (red_dim[0]+3)):
-          ii -= (red_dim[1]+4)
-          jj -= (red_dim[0]+4)
+        if (ii > (green_dim[1]+3)) and  (jj > (green_dim[0]+3)):
+          ii -= (green_dim[1]+4)
+          jj -= (green_dim[0]+4)
           self.setAttr('Coronal Slice (Red)', val=jj)
           self.setAttr('Sagittal Slice (Green)', val=ii)
-        elif ii > (red_dim[1]+3):
-          ii -= (red_dim[1]+4)
-          self.setAttr('Axial Slice (Blue)', val=jj)
-          self.setAttr('Coronal Slice (Red)', val=ii)
-        else:
+        elif ii > (green_dim[1]+3):
+          ii -= (green_dim[1]+4)
           self.setAttr('Axial Slice (Blue)', val=jj)
           self.setAttr('Sagittal Slice (Green)', val=ii)
+        else:
+          self.setAttr('Axial Slice (Blue)', val=jj)
+          self.setAttr('Coronal Slice (Red)', val=ii)
 
     # reset default values with the values from the dimensions of the input data
     self.setAttr('Axial Slice (Blue)', max=dim[0]-1)
@@ -715,11 +745,56 @@ class ExternalNode(gpi.NodeAPI):
     iwidth = self.getVal('i width')
     jwidth = self.getVal('j width')
     kwidth = self.getVal('k width')
-    axialSlice = data3d[islice, :, :] 
-    coronalSlice = data3d[:, jslice, :]
-    sagittalSlice = data3d[:, :, kslice]
-    maximum = np.max([np.max(sagittalSlice), np.max(coronalSlice), np.max(axialSlice)])
-    minimum = np.min([np.min(sagittalSlice), np.min(coronalSlice), np.min(axialSlice)])
+    imageType = self.getVal('2D Image Type')
+    min_max = self.getVal('Min/Max Calculated From: ')
+
+    # convert centers and widths to integers
+    x_width = int(iwidth)
+    y_width = int(jwidth)
+    z_width = int(kwidth)
+    xx = int(islice)
+    yy = int(jslice)
+    zz = int(kslice)
+
+    # collapse slices to display mean, min, max, or just the center slice (unaltered)
+    # calculate ranges for x, y & z
+    x0 = xx - ((x_width-1)//2)
+    x1 = xx + (x_width//2)
+    y0 = yy - ((y_width-1)//2)
+    y1 = yy + (y_width//2)
+    z0 = zz - ((z_width-1)//2)
+    z1 = zz + (z_width//2)
+
+    # adjust values for if widths are 1 (slicer mode)
+    if x0 == x1: x1 += 1
+    elif y0 == y1: y1 += 1
+    elif z0 == z1: z1 += 1
+
+    if imageType == 0:                                            # display mean
+      axialSlice = np.mean(data3d[x0:x1, :, :], axis=0)
+      coronalSlice = np.mean(data3d[:, y0:y1, :], axis=1)
+      sagittalSlice = np.mean(data3d[:, :, z0:z1], axis=2)
+    elif imageType == 1:                                          # display max
+      axialSlice = np.max(data3d[x0:x1, :, :], axis=0)
+      coronalSlice = np.max(data3d[:, y0:y1, :], axis=1)
+      sagittalSlice = np.max(data3d[:, :, z0:z1], axis=2)
+    elif imageType == 2:                                          # display min
+      axialSlice = np.min(data3d[x0:x1, :, :], axis=0)
+      coronalSlice = np.min(data3d[:, y0:y1, :], axis=1)
+      sagittalSlice = np.min(data3d[:, :, z0:z1], axis=2)
+    elif imageType == 3:                                              # display center slice (unaltered)
+      axialSlice = data3d[islice, :, :]
+      coronalSlice = data3d[:, jslice, :]
+      sagittalSlice = data3d[:, :, kslice]
+
+    # determine min and max values
+    if min_max == 0:
+      maximum = np.max([np.max(sagittalSlice), np.max(coronalSlice), np.max(axialSlice)])
+      minimum = np.min([np.min(sagittalSlice), np.min(coronalSlice), np.min(axialSlice)])
+    elif min_max == 1:
+      maximum = np.amax(data3d)
+      minimum = np.amin(data3d)
+    # toggle 'Fixed Range' to get it to change values
     self.setAttr('Range Min', val=minimum)
     self.setAttr('Range Max', val=maximum)
 
@@ -729,7 +804,7 @@ class ExternalNode(gpi.NodeAPI):
     blueRegion, axialSliceImg = process_slice(self, axialSlice, 0, 'transverse slice', islice, jslice, kslice, iwidth, jwidth, kwidth)
 
     # combine all slices into one image
-    combine1 = np.append(redRegion, greenRegion, axis=1)
+    combine1 = np.append(greenRegion, redRegion, axis=1)
     pad = np.zeros([dim[1]+4, dim[1]+4, 4], dtype=greenRegion.dtype)
     combine2 = np.append(pad, blueRegion, axis=1)
     img = np.append(combine1, combine2, axis=0)
@@ -752,39 +827,9 @@ class ExternalNode(gpi.NodeAPI):
     self.setAttr('Viewport:', val=image)
 
     # output volume and slices
-    if save is True or True:                            # override to always save for now
-      zz = int(self.getVal('Sagittal Slice (Green)'))
-      yy = int(self.getVal('Coronal Slice (Red)'))
-      xx = int(self.getVal('Axial Slice (Blue)'))
-      print("xx: " + str(xx))
-      print("yy: " + str(yy))
-      print("zz: " + str(zz))
+    if save is True:
       # retrieve volume
       if int(self.getVal('volume')) == 1:
-        # get widths
-        x_width = int(self.getVal('i width'))
-        y_width = int(self.getVal('j width'))
-        z_width = int(self.getVal('k width'))
-        print("x width: " + str(x_width))
-        print("y width: " + str(y_width))
-        print("z width: " + str(z_width))
-        # calculate ranges for x, y & z
-        x0 = xx - ((x_width-1)//2)
-        x1 = xx + (x_width//2)
-        y0 = yy - ((y_width-1)//2)
-        y1 = yy + (y_width//2)
-        z0 = zz - ((z_width-1)//2)
-        z1 = zz + (z_width//2)
-        print("x0: " + str(x0))
-        print("x1: " + str(x1))
-        print("y0: " + str(y0))
-        print("y1: " + str(y1))
-        print("z0: " + str(z0))
-        print("z1: " + str(z1))
-        # output array
-        if x0 == x1: x1 += 1
-        elif y0 == y1: y1 += 1
-        elif z0 == z1: z1 += 1
         if x_width != 1: x_width = x1 - x0
         if y_width != 1: y_width = y1 - y0
         if z_width != 1: z_width = z1 - z0
